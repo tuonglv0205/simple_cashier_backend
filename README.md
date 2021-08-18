@@ -1,6 +1,12 @@
-# laravel-jwt-auth
+[Simple Server API Cashier]
 
-[Laravel 8 JWT Authentication]
+Description:
+This is a server side project that provides an api and stores simple cashier transactions
+
+Language: PHP version 8.0
+Framework: Laravel 8.x
+Database: Mysql 5.7
+Tech: JWT Authentication
 
 Step install, run the following commands:
 
