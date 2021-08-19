@@ -16,3 +16,5 @@ Step install, run the following commands:
 3. php artisan jwt:secret
 4. php artisan migrate
 5. php artisan db:seed
+
+Document file in /documentions/Documents.xlsx

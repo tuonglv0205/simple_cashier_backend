@@ -12,17 +12,16 @@ class Transaction extends Model
     use SoftDeletes;
 
     public $timestamps = true;
-
-    const TYPE_SEND = 1;
-    const TYPE_RECEIVE = 1;
+    
+    const TYPE_DEPOSIT = 1;
+    const TYPE_WITHDRAWAL = 2;
 
     protected $fillable = [
-        'amount',
-        'currency',
-        'content',
+        'user_id',
         'type',
-        'user_receive',
-        'user_send'
+        'currency_id',
+        'amount',
+        'content'
     ];
 
     protected $casts = [
@@ -30,4 +29,8 @@ class Transaction extends Model
         'updated_at' => 'datetime:Y-m-d H:i:s',
         'deleted_at' => 'datetime:Y-m-d H:i:s',
     ];
+
+    public function currency(){
+        return $this->belongsTo(Currency::class);
+    }
 }

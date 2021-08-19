@@ -5,10 +5,11 @@ use Illuminate\Http\Request;
 
 use Illuminate\Support\Facades\Auth;
 use App\Models\User;
+use Illuminate\Http\Response;
 use Validator;
 
 
-class AuthController extends Controller
+class AuthController extends BaseController
 {
     /**
      * Create a new AuthController instance.
@@ -16,6 +17,7 @@ class AuthController extends Controller
      * @return void
      */
     public function __construct() {
+        parent::__construct();
         $this->middleware('auth:api', ['except' => ['login', 'register']]);
     }
 
@@ -31,14 +33,14 @@ class AuthController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
+            return $this->responseJsonError(Response::HTTP_UNPROCESSABLE_ENTITY, $validator->errors());
         }
 
         if (! $token = auth()->attempt($validator->validated())) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            return $this->responseJsonError(Response::HTTP_UNAUTHORIZED, "Unauthorized");
         }
-
-        return $this->createNewToken($token);
+        $data = $this->createNewToken($token);
+        return $this->responseJson(200, $data);
     }
 
     /**
@@ -54,7 +56,7 @@ class AuthController extends Controller
         ]);
 
         if($validator->fails()){
-            return response()->json($validator->errors()->toJson(), 400);
+            return $this->responseJsonError(Response::HTTP_BAD_REQUEST, $validator->errors());
         }
 
         $user = User::create(array_merge(
@@ -62,10 +64,7 @@ class AuthController extends Controller
                     ['password' => bcrypt($request->password)]
                 ));
 
-        return response()->json([
-            'message' => 'User successfully registered',
-            'user' => $user
-        ], 201);
+        return $this->responseJson(Response::HTTP_CREATED, ['user' => $user], "User successfully registered");
     }
 
 
@@ -77,7 +76,7 @@ class AuthController extends Controller
     public function logout() {
         auth()->logout();
 
-        return response()->json(['message' => 'User successfully signed out']);
+        return $this->responseJson(Response::HTTP_OK, null, "User successfully signed out");
     }
 
     /**
@@ -86,7 +85,8 @@ class AuthController extends Controller
      * @return \Illuminate\Http\JsonResponse
      */
     public function refresh() {
-        return $this->createNewToken(auth()->refresh());
+        $data = $this->createNewToken(auth()->refresh());
+        return $this->responseJson(200, $data);
     }
 
     /**
@@ -95,7 +95,7 @@ class AuthController extends Controller
      * @return \Illuminate\Http\JsonResponse
      */
     public function profile() {
-        return response()->json(auth()->user());
+        return $this->responseJson(200, auth()->user());
     }
 
     /**
@@ -106,12 +106,12 @@ class AuthController extends Controller
      * @return \Illuminate\Http\JsonResponse
      */
     protected function createNewToken($token){
-        return response()->json([
+        return [
             'access_token' => $token,
             'token_type' => 'bearer',
             'expires_in' => auth()->factory()->getTTL() * 60,
             'user' => auth()->user()
-        ]);
+        ];
     }
 
 }

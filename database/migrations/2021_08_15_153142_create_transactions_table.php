@@ -16,13 +16,16 @@ class CreateTransactionsTable extends Migration
         Schema::create('transactions', function (Blueprint $table) {
             $table->id();
             $table->float('amount', 8, 2);
-            $table->string('currency');
+            $table->unsignedBigInteger('currency_id');
             $table->text('content');
-            $table->tinyInteger('type');
-            $table->bigInteger('user_receive');
-            $table->bigInteger('user_send');
+            $table->string('type')->comment('deposit or withdrawal');
+            $table->unsignedBigInteger('user_id');
             $table->softDeletes();
             $table->timestamps();
+
+            $table->index(['user_id', 'currency_id']);
+            $table->foreign('user_id')->references('id')->on('users');
+            $table->foreign('currency_id')->references('id')->on('users');
         });
     }
 

@@ -29,6 +29,7 @@ Route::group(['middleware' => 'api'], function () {
 
     // transaction
     Route::apiResource('transaction', TransactionController::class)->middleware('auth:api');
+    Route::get('transaction-summary', [TransactionController::class, 'summary'])->middleware('auth:api');
 
     // transaction history
     Route::resource('transaction-history', TransactionHistoryController::class)->middleware('auth:api');

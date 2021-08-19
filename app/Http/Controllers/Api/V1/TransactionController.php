@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\BaseController;
+use App\Models\Currency;
 use App\Models\Transaction;
+use App\Models\TransactionHistory;
 use Illuminate\Http\Response;
 use Illuminate\Http\Request;
 use Exception;
@@ -17,15 +20,15 @@ class TransactionController extends BaseController
      */
     public function index(Request $request)
     {
-        $query = Transaction::select('*');
-        if($request->start_date){
+        $query = Transaction::select('*')->where('user_id', auth()->user()->id)->with('currency');
+        if ($request->start_date) {
             $query->where('created_at', '>=', $request->start_date);
         }
-        if($request->end_date){
+        if ($request->end_date) {
             $query->where('created_at', '<=', $request->end_date);
         }
         $data = $query->get();
-        return $this->responseJson(200, $data);
+        return $this->responseJson(Response::HTTP_OK, $data);
     }
 
     /**
@@ -47,15 +50,36 @@ class TransactionController extends BaseController
     public function store(Request $request)
     {
         try {
-            // simple validate
-            if($request->amount < 0 || !$request->user_receive || !$request->user_send || !$request->type || !$request->currency){
+            if ($request->amount < 0 || !$request->type || !$request->currency) {
                 return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Infomation Invalid!");
             }
 
+            $currency = Currency::where('code', strtoupper($request->currency))->first();
+            if (!$currency) {
+                return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Invalid currency!");
+            }
+
+            $allowedTypes = ['deposit', 'withdrawal'];
+            $type = strtolower($request->type);
+
+            if (!in_array($type, $allowedTypes)) {
+                return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Invalid transaction type!");
+            }
+
             $transaction = new Transaction();
-            $transaction->fill($request->all());
+            $transaction->user_id = auth()->user()->id;
+            $transaction->type = $type;
+            $transaction->amount = $request->amount;
+            $transaction->content = $request->content;
+            $transaction->currency_id = $currency->id;
+
             $transaction->save();
-            return $this->responseJson(200, [], 'Create transaction success!');
+
+            if (!$this->addHistory($transaction, 'store')) {
+                return throw new Exception('Add history failed!');
+            }
+
+            return $this->responseJson(Response::HTTP_OK, [], 'Create transaction success!');
         } catch (Exception $e) {
             return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Cannot create transaction!");
         }
@@ -69,7 +93,8 @@ class TransactionController extends BaseController
      */
     public function show(Transaction $transaction)
     {
-        return $this->responseJson(200, $transaction);
+        $transaction->currency;
+        return $this->responseJson(Response::HTTP_OK, $transaction);
     }
 
     /**
@@ -80,7 +105,8 @@ class TransactionController extends BaseController
      */
     public function edit(Transaction $transaction)
     {
-        return $this->responseJson(200, $transaction);
+        $transaction->currency;
+        return $this->responseJson(Response::HTTP_OK, $transaction);
     }
 
     /**
@@ -93,21 +119,39 @@ class TransactionController extends BaseController
     public function update(Request $request, Transaction $transaction)
     {
         try {
-            // simple validate
-            if($request->amount < 0 || !$request->user_receive || !$request->user_send || !$request->type || !$request->currency){
+            if ($request->amount < 0 || !$request->type || !$request->currency) {
                 return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Infomation Invalid!");
             }
 
-            DB::beginTransaction();
-            $dataReq = $request->all();
-            $transaction->fill($dataReq);
-            $transaction->save();
-            DB::commit();
+            $currency = Currency::where('code', strtoupper($request->currency))->first();
+            if (!$currency) {
+                return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Invalid currency!");
+            }
 
-            return $this->responseJson(200, [], 'Update transaction success!');
+            $allowedTypes = ['deposit', 'withdrawal'];
+            $type = strtolower($request->type);
+
+            if (!in_array($type, $allowedTypes)) {
+                return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Invalid transaction type!");
+            }
+
+            DB::beginTransaction();
+            $transaction->type = $type;
+            $transaction->amount = $request->amount;
+            $transaction->content = $request->content;
+            $transaction->currency_id = $currency->id;
+
+            $transaction->save();
+
+            if (!$this->addHistory($transaction, 'update')) {
+                return throw new Exception('Add history failed!');
+            }
+
+            DB::commit();
+            return $this->responseJson(Response::HTTP_OK, [], 'Update transaction success!');
         } catch (Exception $e) {
             DB::rollBack();
-            return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Cannot delete transaction!");
+            return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Update transaction failed!");
         }
     }
 
@@ -120,10 +164,110 @@ class TransactionController extends BaseController
     public function destroy(Transaction $transaction)
     {
         try {
+            DB::beginTransaction();
             $transaction->delete();
-            return $this->responseJson(200, [], 'Delete transaction success!');
+
+            $history = [
+                'transaction_id' => $transaction->id,
+                'user_id' => $transaction->user_id,
+                'amount' => $transaction->amount,
+                'currency_id' => $transaction->currency_id,
+                'transaction_type' => $transaction->type,
+                'action' => 'delete'
+            ];
+            if (!$this->addHistory($transaction, 'delete')) {
+                return throw new Exception('Add history failed!');
+            }
+            DB::commit();
+            return $this->responseJson(Response::HTTP_OK, [], 'Delete transaction success!');
         } catch (Exception $e) {
-            return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Cannot delete transaction!");
+            DB::rollBack();
+            return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Delete transaction failed!");
+        }
+    }
+
+    /**
+     * Get summary all transaction
+     *
+     * @param  \App\Models\Transaction  $transaction
+     * @return null
+     */
+    public function summary(Request $request)
+    {
+        try {
+            $query = Transaction::select(
+                    'currency_id',
+                    'type',
+                    DB::raw('SUM(amount) as total_amount')
+                )
+                ->where('user_id', auth()->user()->id)
+                ->with('currency');
+            if ($request->start_date) {
+                $query->where('created_at', '>=', $request->start_date);
+            }
+            if ($request->end_date) {
+                $query->where('created_at', '<=', $request->end_date);
+            }
+            $query->groupBy('type');
+            $query->groupBy('currency_id');
+            $transactions = $query->get();
+
+            $currencies = Currency::all()->pluck('code')->toArray();
+            $transactionTypes = ['deposit', 'withdrawal'];
+
+            foreach ($currencies as $currency) {
+                $results[$currency] = [
+                    'balance' => 0,
+                    'expenses' => 0,
+                    'income' => 0
+                ];
+            }
+            foreach ($transactions as $transaction) {
+                // count with deposit
+                $totalAmount = $transaction->total_amount;
+                $currencyCode = $transaction->currency->code;
+
+                if ($transaction->type == $transactionTypes[0]) {
+                    $results[$currencyCode]['balance'] += $totalAmount;
+                    $results[$currencyCode]['income'] += $totalAmount;
+                }
+
+                // count with withdrawal
+                if ($transaction->type == $transactionTypes[1]) {
+                    $results[$currencyCode]['balance'] -= $totalAmount;
+                    $results[$currencyCode]['expenses'] += $totalAmount;
+                }
+            }
+
+            return $this->responseJson(Response::HTTP_OK, $results);
+        } catch (Exception $e) {
+            return $this->responseJsonError(Response::HTTP_INTERNAL_SERVER_ERROR, "Can't not get summary transaction!");
+        }
+    }
+
+    /**
+     * Save transaction history
+     *
+     * @param  \App\Models\Transaction  $transaction
+     * @return null
+     */
+    public function addHistory($transaction, $action)
+    {
+        try {
+            $history = [
+                'transaction_id' => $transaction->id,
+                'user_id' => $transaction->user_id,
+                'amount' => $transaction->amount,
+                'currency_id' => $transaction->currency_id,
+                'transaction_type' => $transaction->type,
+                'content' => $transaction->content,
+                'action' => $action
+            ];
+
+            TransactionHistory::create($history);
+            return true;
+        } catch (Exception $e) {
+            return false;
         }
     }
 }
